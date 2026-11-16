@@ -1,17 +1,39 @@
-# ThumbSeek
+<h1 align="center">ThumbSeek</h1>
 
-A Windows Explorer thumbnail handler that shows the frame from **any point you choose in a video** (for example 25% in) instead of the first frame.
+<p align="center">
+  <b>Windows Explorer video thumbnails from any point you choose in the video, not the first frame.</b><br>
+  Every format · fast · works in folder previews
+</p>
 
-- Works for practically every video format (mp4, mkv, webm, avi, wmv, ts, flv, mpg, vob, rmvb, ...), decoded with [FFmpeg](https://ffmpeg.org).
-- Fast: decodes a single keyframe and scales it straight into the thumbnail.
-- Works in file views and in folder previews.
-- Optional: removes the film-strip borders and the app icon Explorer draws on video thumbnails.
+<p align="center">
+  <a href="https://github.com/shad0w-xx/ThumbSeek/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/shad0w-xx/ThumbSeek?label=download"></a>
+  <a href="https://github.com/shad0w-xx/ThumbSeek/actions/workflows/build.yml"><img alt="Build" src="https://github.com/shad0w-xx/ThumbSeek/actions/workflows/build.yml/badge.svg"></a>
+  <img alt="Windows 10/11" src="https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4">
+  <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-green"></a>
+</p>
+
+Lots of videos start with a black screen, a logo or a title card, so Explorer's thumbnails all look the same.
+ThumbSeek shows the frame from a point you pick instead, for example 20% into the video:
+
+![First frame vs ThumbSeek](docs/comparison.png)
+
+## Features
+
+- **Pick the point:** any percentage from 0 to 99 (default 25).
+- **Every format:** mp4, mkv, webm, avi, wmv, ts, flv, mpg, vob, rmvb and more, decoded with [FFmpeg](https://ffmpeg.org).
+- **Fast:** decodes a single keyframe and scales it straight into the thumbnail, typically 15–300 ms even for multi-GB files.
+- **Folder previews too:** folder icons show the chosen frames of the videos inside.
+- **Clean thumbnails (optional):** removes the film-strip borders and the app icon Explorer draws on video thumbnails.
+
+![Explorer showing ThumbSeek thumbnails](docs/explorer.png)
 
 ## Install
 
-1. Download the latest release and extract it into one folder.
+1. [Download the latest release](https://github.com/shad0w-xx/ThumbSeek/releases/latest) and extract it into one folder.
 2. Run `ThumbSeek-setup.exe`, enter the percentage (0-99) and click **Install / Apply** (asks for admin rights).
    Run it again any time to change the percentage.
+
+![ThumbSeek setup window](docs/setup.png)
 
 Setup copies the files to `C:\Program Files\ThumbSeek`, registers the handler, restarts Explorer and clears the thumbnail cache.
 To remove it, run `ThumbSeek-setup.exe` and click **Uninstall**: Windows' own video thumbnails come back.
