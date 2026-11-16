@@ -1,7 +1,7 @@
-// thumb25: Explorer thumbnail handler that shows the video frame at 25% of the duration.
+// ThumbSeek: Explorer thumbnail handler that shows the video frame at a chosen % of the duration (default 25%).
 // Decodes with FFmpeg (DLLs next to this one), so it handles practically every video format.
-// Install with thumb25-setup.exe, or: regsvr32 thumb25.dll from an admin prompt (machine-wide).
-// Uninstall: regsvr32 /u thumb25.dll (restores Windows' own thumbnail handler).
+// Install with ThumbSeek-setup.exe, or: regsvr32 ThumbSeek.dll from an admin prompt (machine-wide).
+// Uninstall: regsvr32 /u ThumbSeek.dll (restores Windows' own thumbnail handler).
 #include <windows.h>
 #include <shlwapi.h>
 #include <shlobj.h>
@@ -13,9 +13,16 @@ extern "C" {
 #include <libswscale/swscale.h>
 }
 
-static const double kOffset = 0.25;
-static const CLSID CLSID_Thumb25 = {0xfe46c886, 0xe672, 0x45e5, {0x8b, 0x96, 0xdd, 0x23, 0xc2, 0x99, 0xb6, 0x4f}};
+static const CLSID CLSID_ThumbSeek = {0xfe46c886, 0xe672, 0x45e5, {0x8b, 0x96, 0xdd, 0x23, 0xc2, 0x99, 0xb6, 0x4f}};
 static const wchar_t kClsid[] = L"{FE46C886-E672-45E5-8B96-DD23C299B64F}";
+static const wchar_t kClsidKey[] = L"Software\\Classes\\CLSID\\{FE46C886-E672-45E5-8B96-DD23C299B64F}";
+
+// Where in the video to take the frame: the "Percent" value (0-99) the setup program stores on our CLSID key.
+static double Offset() {
+    DWORD pct = 25, cb = sizeof(pct);
+    RegGetValueW(HKEY_LOCAL_MACHINE, kClsidKey, L"Percent", RRF_RT_REG_DWORD, nullptr, &pct, &cb);
+    return (pct > 99 ? 25 : pct) / 100.0;
+}
 static const wchar_t kThumbProviderKey[] = L"{e357fccd-a995-4576-b01f-234630154e96}";
 static const wchar_t* kExts[] = {L".mp4", L".m4v",  L".mov",  L".mkv", L".webm", L".wmv", L".asf", L".avi",
                                  L".divx", L".ts",  L".m2ts", L".mts", L".m2t",  L".3gp", L".3g2", L".flv",
@@ -108,15 +115,16 @@ static HRESULT GrabFrame(IStream* stream, UINT cx, HBITMAP* out) {
     av.dec->skip_frame = AVDISCARD_NONKEY;  // decode keyframes only: fast, and never a half-decoded picture
     if (avcodec_open2(av.dec, codec, nullptr) < 0) return E_FAIL;
 
-    // Seek to 25% of the duration: lands on the keyframe at or before that point. If the file has no
-    // duration or index (some .flv, raw .m2v), jump to 25% of the file size instead.
-    if (!(vs->disposition & AV_DISPOSITION_ATTACHED_PIC)) {
+    // Seek to the chosen % of the duration: lands on the keyframe at or before that point. If the file has
+    // no duration or index (some .flv, raw .m2v), jump to that % of the file size instead.
+    double offset = Offset();
+    if (offset > 0 && !(vs->disposition & AV_DISPOSITION_ATTACHED_PIC)) {
         int64_t start = av.fmt->start_time != AV_NOPTS_VALUE ? av.fmt->start_time : 0;
         bool sought = av.fmt->duration > 0 &&
-                      av_seek_frame(av.fmt, -1, start + (int64_t)(av.fmt->duration * kOffset), AVSEEK_FLAG_BACKWARD) >= 0;
+                      av_seek_frame(av.fmt, -1, start + (int64_t)(av.fmt->duration * offset), AVSEEK_FLAG_BACKWARD) >= 0;
         int64_t size = avio_size(av.fmt->pb);
         if (!sought && size > 0 && !(av.fmt->iformat->flags & AVFMT_NO_BYTE_SEEK))
-            av_seek_frame(av.fmt, -1, (int64_t)(size * kOffset), AVSEEK_FLAG_BYTE);
+            av_seek_frame(av.fmt, -1, (int64_t)(size * offset), AVSEEK_FLAG_BYTE);
     }
 
     if (!(av.pkt = av_packet_alloc()) || !(av.frame = av_frame_alloc())) return E_OUTOFMEMORY;
@@ -165,19 +173,19 @@ static HRESULT GrabFrame(IStream* stream, UINT cx, HBITMAP* out) {
     return S_OK;
 }
 
-class Thumb25 : public IInitializeWithFile, public IInitializeWithStream, public IThumbnailProvider {
+class ThumbSeek : public IInitializeWithFile, public IInitializeWithStream, public IThumbnailProvider {
     LONG m_ref = 1;
     IStream* m_stream = nullptr;
 
 public:
-    Thumb25() { InterlockedIncrement(&g_refs); }
-    ~Thumb25() {
+    ThumbSeek() { InterlockedIncrement(&g_refs); }
+    ~ThumbSeek() {
         if (m_stream) m_stream->Release();
         InterlockedDecrement(&g_refs);
     }
     IFACEMETHODIMP QueryInterface(REFIID riid, void** ppv) {
-        static const QITAB qit[] = {QITABENT(Thumb25, IInitializeWithFile), QITABENT(Thumb25, IInitializeWithStream),
-                                    QITABENT(Thumb25, IThumbnailProvider), {0}};
+        static const QITAB qit[] = {QITABENT(ThumbSeek, IInitializeWithFile), QITABENT(ThumbSeek, IInitializeWithStream),
+                                    QITABENT(ThumbSeek, IThumbnailProvider), {0}};
         return QISearch(this, qit, riid, ppv);
     }
     IFACEMETHODIMP_(ULONG) AddRef() { return InterlockedIncrement(&m_ref); }
@@ -228,7 +236,7 @@ public:
     IFACEMETHODIMP CreateInstance(IUnknown* outer, REFIID riid, void** ppv) {
         *ppv = nullptr;
         if (outer) return CLASS_E_NOAGGREGATION;
-        Thumb25* t = new (std::nothrow) Thumb25;
+        ThumbSeek* t = new (std::nothrow) ThumbSeek;
         if (!t) return E_OUTOFMEMORY;
         HRESULT hr = t->QueryInterface(riid, ppv);
         t->Release();
@@ -250,7 +258,7 @@ BOOL WINAPI DllMain(HINSTANCE inst, DWORD reason, void*) {
 
 STDAPI DllGetClassObject(REFCLSID clsid, REFIID riid, void** ppv) {
     *ppv = nullptr;
-    if (clsid != CLSID_Thumb25) return CLASS_E_CLASSNOTAVAILABLE;
+    if (clsid != CLSID_ThumbSeek) return CLASS_E_CLASSNOTAVAILABLE;
     Factory* f = new (std::nothrow) Factory;
     if (!f) return E_OUTOFMEMORY;
     HRESULT hr = f->QueryInterface(riid, ppv);

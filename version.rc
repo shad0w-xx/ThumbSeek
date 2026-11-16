@@ -1,4 +1,4 @@
-// Version info for thumb25.dll and (with /dSETUP) thumb25-setup.exe.
+// Version info for ThumbSeek.dll and (with /dSETUP) ThumbSeek-setup.exe.
 #include <winver.h>
 #define VER 1,0,0,0
 #define VERSTR "1.0.0"
@@ -17,15 +17,15 @@ BEGIN
     BEGIN
         BLOCK "040904B0"
         BEGIN
-            VALUE "ProductName", "thumb25"
+            VALUE "ProductName", "ThumbSeek"
             VALUE "ProductVersion", VERSTR
             VALUE "FileVersion", VERSTR
 #ifdef SETUP
-            VALUE "FileDescription", "thumb25 setup"
-            VALUE "OriginalFilename", "thumb25-setup.exe"
+            VALUE "FileDescription", "ThumbSeek setup"
+            VALUE "OriginalFilename", "ThumbSeek-setup.exe"
 #else
-            VALUE "FileDescription", "thumb25 video thumbnail handler"
-            VALUE "OriginalFilename", "thumb25.dll"
+            VALUE "FileDescription", "ThumbSeek video thumbnail handler"
+            VALUE "OriginalFilename", "ThumbSeek.dll"
 #endif
             VALUE "LegalCopyright", "MIT License"
         END

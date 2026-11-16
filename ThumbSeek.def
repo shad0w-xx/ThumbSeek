@@ -1,4 +1,4 @@
-LIBRARY thumb25
+LIBRARY ThumbSeek
 EXPORTS
     DllGetClassObject   PRIVATE
     DllCanUnloadNow     PRIVATE

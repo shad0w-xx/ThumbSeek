@@ -36,10 +36,10 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory dist | Out-Null
-          Copy-Item thumb25.dll, thumb25-setup.exe, avformat-*.dll, avcodec-*.dll, avutil-*.dll, swscale-*.dll, swresample-*.dll, LICENSE, README.md dist/
+          Copy-Item ThumbSeek.dll, ThumbSeek-setup.exe, avformat-*.dll, avcodec-*.dll, avutil-*.dll, swscale-*.dll, swresample-*.dll, LICENSE, README.md dist/
           Copy-Item "$((Get-ChildItem ffmpeg_dl -Directory)[0].FullName)\LICENSE.txt" dist/FFMPEG-LICENSE.txt
 
       - uses: actions/upload-artifact@v4
         with:
-          name: thumb25
+          name: ThumbSeek
           path: dist/

@@ -1,4 +1,4 @@
-// thumb25-setup: one-click install/uninstall of thumb25.dll and its FFmpeg DLLs (which must sit next to this exe).
+// ThumbSeek-setup: one-click install/uninstall of ThumbSeek.dll and its FFmpeg DLLs (which must sit next to this exe).
 // The dialog runs as the normal user; only the actual install/uninstall step asks for admin (UAC),
 // by relaunching this exe with /install or /uninstall.
 #include <windows.h>
@@ -12,8 +12,16 @@
 #pragma comment(linker, "\"/manifestdependency:type='win32' name='Microsoft.Windows.Common-Controls' " \
                         "version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
 
+static const wchar_t kClsidKey[] = L"Software\\Classes\\CLSID\\{FE46C886-E672-45E5-8B96-DD23C299B64F}";
 static const wchar_t kInprocKey[] = L"Software\\Classes\\CLSID\\{FE46C886-E672-45E5-8B96-DD23C299B64F}\\InprocServer32";
-enum { ID_INSTALL = 100, ID_UNINSTALL };
+enum { ID_INSTALL = 100, ID_UNINSTALL, ID_PERCENT, ID_CLEAN };
+
+// The frame position (0-99 % of the video) the thumbnail handler reads.
+static DWORD Percent() {
+    DWORD v = 25, cb = sizeof(v);
+    RegGetValueW(HKEY_LOCAL_MACHINE, kClsidKey, L"Percent", RRF_RT_REG_DWORD, nullptr, &v, &cb);
+    return v > 99 ? 25 : v;
+}
 
 static std::wstring KnownFolder(REFKNOWNFOLDERID id) {
     wchar_t* p = nullptr;
@@ -22,7 +30,7 @@ static std::wstring KnownFolder(REFKNOWNFOLDERID id) {
     return s;
 }
 
-static std::wstring InstallDir() { return KnownFolder(FOLDERID_ProgramFiles) + L"\\thumb25"; }
+static std::wstring InstallDir() { return KnownFolder(FOLDERID_ProgramFiles) + L"\\ThumbSeek"; }
 
 static std::wstring InstalledDll() {
     wchar_t v[MAX_PATH * 2];
@@ -48,8 +56,8 @@ static bool RemoveFile(const std::wstring& path) {
     return true;
 }
 
-// thumb25.dll and the FFmpeg DLLs it needs (version numbers in the names change with FFmpeg updates).
-static const wchar_t* kFiles[] = {L"thumb25.dll",   L"avformat-*.dll", L"avcodec-*.dll",
+// ThumbSeek.dll and the FFmpeg DLLs it needs (version numbers in the names change with FFmpeg updates).
+static const wchar_t* kFiles[] = {L"ThumbSeek.dll",   L"avformat-*.dll", L"avcodec-*.dll",
                                   L"avutil-*.dll",  L"swscale-*.dll",  L"swresample-*.dll"};
 
 // Calls fn(file name) for each of our files in dir; stops and returns false if fn does.
@@ -88,13 +96,14 @@ static void SetRails(bool on) {
 
 // --- Elevated part ---
 
-static HRESULT AdminInstall(bool rails) {
+static HRESULT AdminInstall(DWORD percent, bool rails) {
+    if (percent > 99) return E_INVALIDARG;
     wchar_t exe[MAX_PATH];
     GetModuleFileNameW(nullptr, exe, MAX_PATH);
     std::wstring src = exe;
     src = src.substr(0, src.find_last_of(L'\\'));
     std::wstring dir = InstallDir();
-    if (GetFileAttributesW((src + L"\\thumb25.dll").c_str()) == INVALID_FILE_ATTRIBUTES)
+    if (GetFileAttributesW((src + L"\\ThumbSeek.dll").c_str()) == INVALID_FILE_ATTRIBUTES)
         return HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND);
     if (_wcsicmp(src.c_str(), dir.c_str()) != 0) {  // running from the install folder itself: nothing to copy
         CreateDirectoryW(dir.c_str(), nullptr);
@@ -104,8 +113,18 @@ static HRESULT AdminInstall(bool rails) {
             }))
             return HRESULT_FROM_WIN32(GetLastError());
     }
-    HRESULT hr = CallDll(dir + L"\\thumb25.dll", "DllRegisterServer");
-    if (SUCCEEDED(hr)) SetRails(rails);
+    HRESULT hr = CallDll(dir + L"\\ThumbSeek.dll", "DllRegisterServer");
+    if (SUCCEEDED(hr)) {
+        SetRails(rails);
+        RegSetKeyValueW(HKEY_LOCAL_MACHINE, kClsidKey, L"Percent", REG_DWORD, &percent, sizeof(percent));
+        // Remove a copy installed under the project's old name (thumb25); the registration now points here.
+        std::wstring old = KnownFolder(FOLDERID_ProgramFiles) + L"\\thumb25";
+        if (GetFileAttributesW(old.c_str()) != INVALID_FILE_ATTRIBUTES) {
+            RemoveFile(old + L"\\thumb25.dll");
+            ForEachFile(old, [&](const std::wstring& f) { return RemoveFile(old + L"\\" + f), true; });
+            if (!RemoveDirectoryW(old.c_str())) MoveFileExW(old.c_str(), nullptr, MOVEFILE_DELAY_UNTIL_REBOOT);
+        }
+    }
     return hr;
 }
 
@@ -179,51 +198,117 @@ static void RefreshExplorer() {
     if (!Explorers(false)) ShellExecuteW(nullptr, nullptr, L"explorer.exe", nullptr, nullptr, SW_SHOWNORMAL);
 }
 
-static HRESULT CALLBACK OnDialog(HWND h, UINT msg, WPARAM, LPARAM, LONG_PTR installed) {
-    if (msg == TDN_CREATED) {
-        SendMessageW(h, TDM_SET_BUTTON_ELEVATION_REQUIRED_STATE, ID_INSTALL, TRUE);
-        SendMessageW(h, TDM_SET_BUTTON_ELEVATION_REQUIRED_STATE, ID_UNINSTALL, TRUE);
-        SendMessageW(h, TDM_ENABLE_BUTTON, ID_UNINSTALL, installed);
-    }
-    return S_OK;
+// --- Setup window ---
+
+static HWND g_status, g_percent, g_clean, g_uninstall;
+
+static void ShowState() {
+    std::wstring dll = InstalledDll();
+    SetWindowTextW(g_status, dll.empty() ? L"Status: not installed."
+                                         : (L"Status: installed, using the frame at " + std::to_wstring(Percent()) + L"%.").c_str());
+    EnableWindow(g_uninstall, !dll.empty());
 }
 
-int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR cmd, int) {
+static void OnAction(HWND wnd, int id) {
+    wchar_t arg[64] = L"/uninstall";
+    if (id == ID_INSTALL) {
+        wchar_t text[8] = L"";
+        GetWindowTextW(g_percent, text, ARRAYSIZE(text));
+        int pct = text[0] ? _wtoi(text) : -1;
+        if (pct < 0 || pct > 99) {
+            MessageBoxW(wnd, L"Enter a percentage from 0 to 99.", L"ThumbSeek setup", MB_ICONWARNING);
+            SetFocus(g_percent);
+            return;
+        }
+        bool clean = SendMessageW(g_clean, BM_GETCHECK, 0, 0) == BST_CHECKED;
+        swprintf_s(arg, L"/install %d%s", pct, clean ? L" clean" : L"");
+    }
+    EnableWindow(wnd, FALSE);  // the window can't respond while we wait; drop clicks made meanwhile
+    HRESULT hr = RunElevated(arg);
+    if (SUCCEEDED(hr)) RefreshExplorer();
+    MSG m;
+    while (PeekMessageW(&m, nullptr, WM_KEYFIRST, WM_KEYLAST, PM_REMOVE) ||
+           PeekMessageW(&m, nullptr, WM_MOUSEFIRST, WM_MOUSELAST, PM_REMOVE)) {
+    }
+    EnableWindow(wnd, TRUE);
+    SetForegroundWindow(wnd);
+    if (hr == HRESULT_FROM_WIN32(ERROR_CANCELLED)) return;  // said No to UAC
+    wchar_t msg[200];
+    if (SUCCEEDED(hr)) swprintf_s(msg, L"Done. Explorer was restarted and video thumbnails will be regenerated as you open folders.");
+    else swprintf_s(msg, L"That didn't work (error 0x%08X).", (unsigned)hr);
+    MessageBoxW(wnd, msg, L"ThumbSeek setup", SUCCEEDED(hr) ? MB_ICONINFORMATION : MB_ICONERROR);
+    ShowState();
+}
+
+static LRESULT CALLBACK WndProc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp) {
+    switch (msg) {
+    case WM_COMMAND:
+        switch (LOWORD(wp)) {
+        case IDOK:  // Enter
+        case ID_INSTALL: OnAction(wnd, ID_INSTALL); return 0;
+        case ID_UNINSTALL: OnAction(wnd, ID_UNINSTALL); return 0;
+        case IDCANCEL: DestroyWindow(wnd); return 0;  // Esc or Close
+        }
+        break;
+    case WM_DESTROY: PostQuitMessage(0); return 0;
+    }
+    return DefWindowProcW(wnd, msg, wp, lp);
+}
+
+int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR cmd, int show) {
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
-    if (!wcscmp(cmd, L"/install")) return AdminInstall(true);
-    if (!wcscmp(cmd, L"/install-norails")) return AdminInstall(false);
+    // Elevated part: "/install <percent> [clean]" or "/uninstall".
+    if (!wcsncmp(cmd, L"/install ", 9)) return AdminInstall((DWORD)_wtoi(cmd + 9), !wcsstr(cmd, L" clean"));
     if (!wcscmp(cmd, L"/uninstall")) return AdminUninstall();
 
-    for (;;) {
-        std::wstring dll = InstalledDll();
-        std::wstring status = dll.empty() ? L"Status: not installed." : L"Status: installed\n" + dll;
-        TASKDIALOG_BUTTON buttons[] = {
-            {ID_INSTALL, L"Install\nCopies thumb25 to Program Files and makes Explorer use it. Run again to change the option below."},
-            {ID_UNINSTALL, L"Uninstall\nRemoves it and brings back Windows' own video thumbnails."}};
-        TASKDIALOGCONFIG tc = {sizeof(tc)};
-        tc.dwFlags = TDF_USE_COMMAND_LINKS | TDF_ALLOW_DIALOG_CANCELLATION;
-        tc.dwCommonButtons = TDCBF_CLOSE_BUTTON;
-        tc.pszWindowTitle = L"thumb25 setup";
-        tc.pszMainInstruction = L"Video thumbnails from 25% into the video";
-        tc.pszContent = status.c_str();
-        tc.pButtons = buttons;
-        tc.cButtons = ARRAYSIZE(buttons);
-        tc.pfCallback = OnDialog;
-        tc.lpCallbackData = !dll.empty();
-        tc.pszVerificationText = L"Clean thumbnails: no film-strip borders (movie rails) and no app icon";
-        if (RailsOff()) tc.dwFlags |= TDF_VERIFICATION_FLAG_CHECKED;
-        int pressed = 0;
-        BOOL noRails = FALSE;
-        if (FAILED(TaskDialogIndirect(&tc, &pressed, nullptr, &noRails))) return 1;
-        if (pressed != ID_INSTALL && pressed != ID_UNINSTALL) return 0;
+    SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_SYSTEM_AWARE);
+    int dpi = (int)GetDpiForSystem();
+    auto S = [dpi](int v) { return MulDiv(v, dpi, 96); };
+    NONCLIENTMETRICSW ncm = {sizeof(ncm)};
+    SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, sizeof(ncm), &ncm, 0);
+    HFONT font = CreateFontIndirectW(&ncm.lfMessageFont);
 
-        HRESULT hr = RunElevated(pressed == ID_UNINSTALL ? L"/uninstall" : noRails ? L"/install-norails" : L"/install");
-        if (hr == HRESULT_FROM_WIN32(ERROR_CANCELLED)) continue;  // said No to UAC
-        if (SUCCEEDED(hr)) RefreshExplorer();
-        wchar_t msg[200];
-        if (SUCCEEDED(hr)) swprintf_s(msg, L"Explorer was restarted and video thumbnails will be regenerated as you open folders.");
-        else swprintf_s(msg, L"Error 0x%08X.", (unsigned)hr);
-        TaskDialog(nullptr, nullptr, L"thumb25 setup", SUCCEEDED(hr) ? L"Done" : L"That didn't work", msg,
-                   TDCBF_OK_BUTTON, SUCCEEDED(hr) ? TD_INFORMATION_ICON : TD_ERROR_ICON, nullptr);
+    WNDCLASSW wc = {};
+    wc.lpfnWndProc = WndProc;
+    wc.hInstance = inst;
+    wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
+    wc.lpszClassName = L"ThumbSeeksetup";
+    RegisterClassW(&wc);
+    RECT rc = {0, 0, S(440), S(200)};
+    DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
+    AdjustWindowRect(&rc, style, FALSE);
+    HWND wnd = CreateWindowW(L"ThumbSeeksetup", L"ThumbSeek setup", style, CW_USEDEFAULT, CW_USEDEFAULT, rc.right - rc.left,
+                             rc.bottom - rc.top, nullptr, nullptr, inst, nullptr);
+
+    auto Add = [&](const wchar_t* cls, const wchar_t* text, DWORD st, int x, int y, int w, int h, int id) {
+        HWND c = CreateWindowW(cls, text, WS_CHILD | WS_VISIBLE | st, S(x), S(y), S(w), S(h), wnd, (HMENU)(INT_PTR)id, inst, nullptr);
+        SendMessageW(c, WM_SETFONT, (WPARAM)font, TRUE);
+        return c;
+    };
+    Add(L"STATIC", L"Video thumbnails from any point in the video, for every format.", 0, 16, 14, 410, 20, 0);
+    g_status = Add(L"STATIC", L"", 0, 16, 38, 410, 20, 0);
+    Add(L"STATIC", L"Use the frame at this % of the video (0-99):", 0, 16, 72, 260, 20, 0);
+    g_percent = Add(L"EDIT", std::to_wstring(Percent()).c_str(), WS_BORDER | WS_TABSTOP | ES_NUMBER | ES_CENTER, 280, 69, 50, 24, ID_PERCENT);
+    SendMessageW(g_percent, EM_SETLIMITTEXT, 2, 0);
+    g_clean = Add(L"BUTTON", L"Clean thumbnails: no film-strip borders and no app icon", WS_TABSTOP | BS_AUTOCHECKBOX, 16, 104, 410, 22, ID_CLEAN);
+    SendMessageW(g_clean, BM_SETCHECK, RailsOff() ? BST_CHECKED : BST_UNCHECKED, 0);
+    HWND install = Add(L"BUTTON", L"Install / Apply", WS_TABSTOP | BS_DEFPUSHBUTTON, 16, 150, 130, 32, ID_INSTALL);
+    g_uninstall = Add(L"BUTTON", L"Uninstall", WS_TABSTOP, 156, 150, 110, 32, ID_UNINSTALL);
+    Add(L"BUTTON", L"Close", WS_TABSTOP, 316, 150, 110, 32, IDCANCEL);
+    SendMessageW(install, BCM_SETSHIELD, 0, TRUE);  // UAC shield: these ask for admin
+    SendMessageW(g_uninstall, BCM_SETSHIELD, 0, TRUE);
+    ShowState();
+
+    ShowWindow(wnd, show);
+    SetFocus(g_percent);
+    MSG m;
+    while (GetMessageW(&m, nullptr, 0, 0) > 0) {
+        if (!IsDialogMessageW(wnd, &m)) {  // Tab, Enter and Esc keys
+            TranslateMessage(&m);
+            DispatchMessageW(&m);
+        }
     }
+    DeleteObject(font);
+    return 0;
 }
