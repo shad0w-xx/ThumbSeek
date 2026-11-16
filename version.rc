@@ -1,0 +1,37 @@
+// Version info for thumb25.dll and (with /dSETUP) thumb25-setup.exe.
+#include <winver.h>
+#define VER 1,0,0,0
+#define VERSTR "1.0.0"
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION VER
+PRODUCTVERSION VER
+FILEOS VOS_NT_WINDOWS32
+#ifdef SETUP
+FILETYPE VFT_APP
+#else
+FILETYPE VFT_DLL
+#endif
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "ProductName", "thumb25"
+            VALUE "ProductVersion", VERSTR
+            VALUE "FileVersion", VERSTR
+#ifdef SETUP
+            VALUE "FileDescription", "thumb25 setup"
+            VALUE "OriginalFilename", "thumb25-setup.exe"
+#else
+            VALUE "FileDescription", "thumb25 video thumbnail handler"
+            VALUE "OriginalFilename", "thumb25.dll"
+#endif
+            VALUE "LegalCopyright", "MIT License"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

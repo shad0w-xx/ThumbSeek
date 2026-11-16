@@ -1,0 +1,9 @@
+ffmpeg_dl/
+dist/
+*.dll
+*.exe
+*.obj
+*.lib
+*.exp
+*.res
+*.pdb
