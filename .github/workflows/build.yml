@@ -18,7 +18,7 @@ jobs:
       FFMPEG_URL: https://github.com/${{ github.repository }}/releases/download/ffmpeg-9.0/ffmpeg-n9.0-latest-win64-lgpl-shared-9.0.zip
       FFMPEG_SHA256: 1CA86821F7FD84C99BE0BE3A541BC936E26834CC9DB49355853869C4F8AD3A98
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Get FFmpeg (pinned, checksum-verified)
         shell: pwsh
@@ -39,7 +39,7 @@ jobs:
           Copy-Item ThumbSeek.dll, ThumbSeek-setup.exe, avformat-*.dll, avcodec-*.dll, avutil-*.dll, swscale-*.dll, swresample-*.dll, LICENSE, README.md dist/
           Copy-Item "$((Get-ChildItem ffmpeg_dl -Directory)[0].FullName)\LICENSE.txt" dist/FFMPEG-LICENSE.txt
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: ThumbSeek
           path: dist/
