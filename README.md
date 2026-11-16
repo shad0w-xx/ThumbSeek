@@ -16,6 +16,26 @@ A Windows Explorer thumbnail handler that shows the frame from **any point you c
 Setup copies the files to `C:\Program Files\ThumbSeek`, registers the handler, restarts Explorer and clears the thumbnail cache.
 To remove it, run `ThumbSeek-setup.exe` and click **Uninstall**: Windows' own video thumbnails come back.
 
+## What it changes on your system
+
+Install / Apply (needs admin rights):
+
+- Copies `ThumbSeek.dll` and the five FFmpeg DLLs it needs into `C:\Program Files\ThumbSeek`.
+- Registers `ThumbSeek.dll` as the Explorer thumbnail handler (a COM shell extension) for these video types:
+  .mp4 .m4v .mov .mkv .webm .wmv .asf .avi .divx .ts .m2ts .mts .m2t .3gp .3g2 .flv .f4v .mpg .mpeg .mpe .m2v .vob .rm .rmvb .ogv .ogm .mxf .dv.
+  The handler each type had before (normally Windows' own) is saved and restored on uninstall.
+- Sets `DisableProcessIsolation` for the handler, so it runs inside Explorer instead of Windows' isolated thumbnail
+  process (which is far too slow for large videos).
+- Stores the chosen percentage as `Percent` under the handler's registry key.
+- If "Clean thumbnails" is ticked: sets `Treatment` to 0 and an empty `TypeOverlay` under
+  `HKLM\Software\Classes\SystemFileAssociations\video`, which removes the film-strip borders and the app icon Explorer
+  draws on all video thumbnails. Unticked, it restores Windows' default.
+- Restarts Explorer and deletes the current user's thumbnail cache, so thumbnails are regenerated.
+- Removes a copy installed under the old name (`C:\Program Files\thumb25`), if present.
+
+Uninstall reverses all of this: restores the previous thumbnail handlers and Windows' default film-strip/app-icon
+setting, removes the handler registration and `C:\Program Files\ThumbSeek`, restarts Explorer and clears the cache.
+
 ## Build
 
 Requires Visual Studio Build Tools (C++ workload) and the FFmpeg `lgpl-shared` win64 build from
