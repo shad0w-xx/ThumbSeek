@@ -60,7 +60,9 @@ struct Av {
     AVPacket* pkt = nullptr;
     AVFrame* frame = nullptr;
     SwsContext* sws = nullptr;
+    uint8_t* scaled = nullptr;
     ~Av() {
+        av_free(scaled);
         sws_freeContext(sws);
         av_frame_free(&frame);
         av_packet_free(&pkt);
@@ -161,16 +163,40 @@ static HRESULT GrabFrame(IStream* stream, UINT cx, HBITMAP* out) {
     HBITMAP bmp = CreateDIBSection(nullptr, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
     if (!bmp) return E_OUTOFMEMORY;
 
+    // Scale into our own padded buffer, then copy the rows into the bitmap. swscale's SIMD code writes whole
+    // 16-pixel blocks, so with an exact-width destination it can write past the end of each row; on the last
+    // row that went past the end of the bitmap and crashed Explorer (seen when the thumbnail size equals the
+    // video size, e.g. a 712x1280 video at 1280 px).
+    const int rowBytes = tw * 4, stride = (rowBytes + 127) & ~63;  // aligned, with at least 64 spare bytes per row
     av.sws = sws_getContext(f->width, f->height, (AVPixelFormat)f->format, tw, th, AV_PIX_FMT_BGRA, SWS_BILINEAR,
                             nullptr, nullptr, nullptr);
-    uint8_t* dst[4] = {(uint8_t*)bits};
-    int dstStride[4] = {tw * 4};
-    if (!av.sws || sws_scale(av.sws, f->data, f->linesize, 0, f->height, dst, dstStride) <= 0) {
+    av.scaled = (uint8_t*)av_malloc((size_t)stride * (th + 1));
+    uint8_t* dst[4] = {av.scaled};
+    int dstStride[4] = {stride};
+    if (!av.sws || !av.scaled || sws_scale(av.sws, f->data, f->linesize, 0, f->height, dst, dstStride) <= 0) {
         DeleteObject(bmp);
         return E_FAIL;
     }
+    for (int y = 0; y < th; ++y) memcpy((uint8_t*)bits + (size_t)y * rowBytes, av.scaled + (size_t)y * stride, rowBytes);
     *out = bmp;
     return S_OK;
+}
+
+// We run inside Explorer, so a crash in FFmpeg on a malformed or unusual video would take Explorer down.
+// Turn such a crash into "no thumbnail" for that one file instead. After a fault FFmpeg's state can't be
+// trusted, so GrabFrame's cleanup is deliberately skipped (a small leak, rather than freeing corrupt state
+// and crashing anyway). Faults on FFmpeg's own worker threads are not caught here. (__try can't share a
+// function with C++ objects that have destructors, which is why this only forwards to GrabFrame.)
+static HRESULT GrabFrameGuarded(IStream* stream, UINT cx, HBITMAP* out) {
+    __try {
+        return GrabFrame(stream, cx, out);
+    } __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION || GetExceptionCode() == EXCEPTION_INT_DIVIDE_BY_ZERO ||
+                        GetExceptionCode() == EXCEPTION_ILLEGAL_INSTRUCTION
+                    ? EXCEPTION_EXECUTE_HANDLER
+                    : EXCEPTION_CONTINUE_SEARCH) {
+        *out = nullptr;
+        return E_FAIL;
+    }
 }
 
 class ThumbSeek : public IInitializeWithFile, public IInitializeWithStream, public IThumbnailProvider {
@@ -213,7 +239,7 @@ public:
         *phbmp = nullptr;
         *alpha = WTSAT_RGB;
         av_log_set_level(AV_LOG_QUIET);
-        return GrabFrame(m_stream, cx, phbmp);
+        return GrabFrameGuarded(m_stream, cx, phbmp);
     }
 };
 
